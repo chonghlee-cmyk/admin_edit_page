@@ -31,12 +31,4 @@ jobs:
           ADMIN_PWD: ${{ secrets.ADMIN_PWD }}
           SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
           SERVICE_ACCOUNT_JSON: service_account.json
-        run: python run_parallel.py
-
-      - name: Upload logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: crawler-logs-${{ github.run_number }}
-          path: logs/
-          retention-days: 7
+        run: python admin_edit_page.py

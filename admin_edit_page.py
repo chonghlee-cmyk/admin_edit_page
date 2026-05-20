@@ -237,7 +237,19 @@ def write_row(ws, sheet_row: int, lang_results: List[List[str]]) -> None:
         a1 = gspread.utils.rowcol_to_a1(sheet_row, col_start)
         a2 = gspread.utils.rowcol_to_a1(sheet_row, col_end)
         update_data.append({"range": f"{a1}:{a2}", "values": [fields_5]})
-    ws.batch_update(update_data, value_input_option="RAW")
+
+    for attempt in range(5):
+        try:
+            ws.batch_update(update_data, value_input_option="RAW")
+            return
+        except gspread.exceptions.APIError as e:
+            if "RESOURCE_EXHAUSTED" in str(e) or "Quota" in str(e):
+                wait = 60 * (attempt + 1)
+                print(f"  [!] Sheets API 할당량 초과 — {wait}초 대기 후 재시도 ({attempt+1}/5)")
+                time.sleep(wait)
+            else:
+                raise
+    raise RuntimeError(f"write_row 실패: 5회 재시도 초과 (row {sheet_row})")
 
 
 def write_sync_log(sh, processed: int, worker_id: int, duration_sec: float) -> None:
