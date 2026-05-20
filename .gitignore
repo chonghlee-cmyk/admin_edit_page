@@ -1,0 +1,13 @@
+# 서비스 계정 키 (절대 커밋 금지)
+*.json
+!requirements*.txt
+
+# 로그
+logs/
+debug/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
