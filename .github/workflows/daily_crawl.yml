@@ -4,11 +4,6 @@ on:
   schedule:
     - cron: '0 11 * * *'  # 매일 20:00 KST (= 11:00 UTC)
   workflow_dispatch:       # 수동 실행 버튼
-    inputs:
-      total:
-        description: '처리할 작품 수 (기본: 전체)'
-        required: false
-        default: '2009'
 
 jobs:
   crawl:
@@ -36,7 +31,6 @@ jobs:
           ADMIN_PWD: ${{ secrets.ADMIN_PWD }}
           SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
           SERVICE_ACCOUNT_JSON: service_account.json
-          TOTAL: ${{ github.event.inputs.total || '2009' }}
         run: python run_parallel.py
 
       - name: Upload logs
