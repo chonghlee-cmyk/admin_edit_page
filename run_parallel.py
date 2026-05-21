@@ -18,7 +18,7 @@ SCRIPT = Path(__file__).parent / "admin_edit_page.py"
 LOG_DIR = Path(__file__).parent / "logs"
 LOG_DIR.mkdir(exist_ok=True)
 
-TOTAL = int(os.environ.get("TOTAL", "2009"))
+TOTAL = int(os.environ.get("TOTAL", "5000"))
 
 
 def get_arg(flag, default):
