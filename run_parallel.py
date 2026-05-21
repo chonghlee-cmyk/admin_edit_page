@@ -31,7 +31,7 @@ def get_arg(flag, default):
 
 
 def main():
-    n_workers = get_arg("--workers", 10)
+    n_workers = get_arg("--workers", 20)
     force = "--force" in sys.argv
 
     chunk = math.ceil(TOTAL / n_workers)
