@@ -87,6 +87,8 @@ LANG_COL_START   = 4   # D열
 FIELDS_PER_LANG  = 7   # 7개 데이터 (5개 + 2개)
 DATA_FIELDS      = 7   # 실제 기록할 필드 수
 
+LANG_CHUNK_SIZE  = 100  # 언어 탭 일괄 쓰기 버퍼 크기 (행)
+
 # 언어별 HTML 필드명 매핑 (url_suffix → html_field_name)
 LANGUAGE_HTML_MAP = {
     "en":     "en",
@@ -338,6 +340,32 @@ def write_row(ws, sheet_row: int, lang_results: List[List[str]]) -> None:
     raise RuntimeError(f"write_row 실패: 5회 재시도 초과 (row {sheet_row})")
 
 
+def flush_lang_buffer(ws, start_row: int, rows: List[List[str]], label: str = "") -> None:
+    """
+    버퍼된 연속 행(D{start_row}~)을 한 번의 API 호출로 일괄 기록.
+    쿼터 초과(RESOURCE_EXHAUSTED/429) 시 지수 백오프 재시도.
+    """
+    if not rows:
+        return
+    a1 = gspread.utils.rowcol_to_a1(start_row, LANG_COL_START)
+    a2 = gspread.utils.rowcol_to_a1(start_row + len(rows) - 1, LANG_COL_START + DATA_FIELDS - 1)
+    rng = f"{a1}:{a2}"
+
+    for attempt in range(6):
+        try:
+            ws.update(range_name=rng, values=rows, value_input_option="RAW")
+            return
+        except gspread.exceptions.APIError as e:
+            msg = str(e)
+            if "RESOURCE_EXHAUSTED" in msg or "Quota" in msg or "429" in msg:
+                wait = min(60, 5 * (2 ** attempt))   # 5,10,20,40,60,60
+                print(f"  [!] [{label}] 쿼터 초과 — {wait}초 대기 후 재시도 ({attempt+1}/6)")
+                time.sleep(wait)
+            else:
+                raise
+    print(f"  [!] [{label}] 일괄 기록 실패: 재시도 초과 (시작행 {start_row}, {len(rows)}행)")
+
+
 def write_sync_log(sh, processed: int, label, duration_sec: float) -> None:
     """label: 언어 코드(EN…) 또는 워커 번호."""
     from datetime import datetime
@@ -472,6 +500,10 @@ def main() -> None:
     total     = len(toon_ids)
     processed = 0
 
+    # 언어 탭 일괄 쓰기 버퍼 (연속 행을 모아 한 번에 기록)
+    buf: List[List[str]] = []
+    buf_start_row: Optional[int] = None
+
     for i, toon_idx in enumerate(toon_ids, start=1):
         # 작품번호마다 TCP 연결 풀 초기화 (hang 방지)
         old_jar = session.cookies.copy()
@@ -501,14 +533,14 @@ def main() -> None:
                 sheet_row = i + 1  # 헤더(1행) + 데이터 시작
                 field_data = [fields.get(fname, "") for fname in FIELD_NAMES]
 
-                try:
-                    ws.update(
-                        range_name=gspread.utils.rowcol_to_a1(sheet_row, LANG_COL_START),
-                        values=[field_data],
-                        value_input_option="RAW"
-                    )
-                except Exception as e:
-                    print(f"  [!] 시트 기록 실패 {toon_idx}: {e}")
+                # 버퍼에 적재 (연속 행) — 가득 차면 일괄 플러시
+                if buf_start_row is None:
+                    buf_start_row = sheet_row
+                buf.append(field_data)
+                if len(buf) >= LANG_CHUNK_SIZE:
+                    flush_lang_buffer(ws, buf_start_row, buf, target_lang)
+                    buf = []
+                    buf_start_row = None
 
                 time.sleep(SLEEP_BASE + random.random() * SLEEP_JITTER)
                 break  # 해당 언어 처리 후 종료
@@ -543,6 +575,12 @@ def main() -> None:
             processed += 1
             if i <= 3 or i == total or i % 50 == 0:
                 print(f"[W{worker_id}] [{i}/{total}] {toon_idx} - {lang_ok}/{len(LANGUAGES)} OK")
+
+    # 버퍼에 남은 잔여 행 일괄 플러시
+    if target_lang and buf:
+        flush_lang_buffer(ws, buf_start_row, buf, target_lang)
+        buf = []
+        buf_start_row = None
 
     duration = _time.time() - start_time
     log_label = target_lang.upper() if target_lang else worker_id
