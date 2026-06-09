@@ -171,6 +171,48 @@ def _checkbox_checked(soup: BeautifulSoup, input_id: str) -> str:
     return "Y" if el.has_attr("checked") else "N"
 
 
+def _selected_value(soup: BeautifulSoup, select_name: str) -> Optional[str]:
+    """선택된 option의 value 반환. select 자체가 없으면 None."""
+    sel = soup.find("select", attrs={"name": select_name})
+    if not sel:
+        return None
+    opt = sel.find("option", selected=True)
+    if opt is None:
+        opt = sel.find("option")
+    if opt is None:
+        return None
+    return opt.get("value", "").strip()
+
+
+def _contract_result(soup: BeautifulSoup, status_names: List[str], date_names: List[str]) -> str:
+    """
+    계약 상태 + 종료일 조합 결과.
+      · select(계약상태)가 없으면  → ""  (해당 플랫폼 필드 자체 없음)
+      · value == "0" (정상/Safe)   → "정상"
+      · value 1/2/3 (서비스 불가)   → 계약 종료일 (없으면 "")
+    """
+    status_val = None
+    for nm in status_names:
+        v = _selected_value(soup, nm)
+        if v is not None:
+            status_val = v
+            break
+
+    if status_val is None:
+        return ""          # 필드 자체가 없음
+    if status_val == "0":
+        return "정상"       # Safe → 날짜 출력 안 함
+
+    # 이슈(서비스 불가) → 종료일 출력
+    for nm in date_names:
+        inp = soup.find("input", attrs={"name": nm})
+        if inp and inp.has_attr("value"):
+            val = inp.get("value", "").strip()
+            if val:
+                return val
+    return ""
+
+
 def parse_lang_fields(soup: BeautifulSoup, fs: str, html_fs: str) -> Dict[str, str]:
     status_g    = _selected_text(soup, select_name=f"finish_yn_{fs}")
     status_lala = _selected_text(soup, select_name=f"fmale_finish_yn_{fs}")
@@ -185,31 +227,27 @@ def parse_lang_fields(soup: BeautifulSoup, fs: str, html_fs: str) -> Dict[str, s
             checked_days.append(d_name)
     days = ", ".join(checked_days) if checked_days else "미설정"
 
-    # 계약 종료 필드 추출 — 접미사가 언어마다 다를 수 있어 후보를 순서대로 시도
+    # 계약 종료 필드 — 접미사가 언어마다 다를 수 있어 후보를 순서대로 시도
     # (예: ES는 es_mx 또는 spanish(la), ZH는 zh_tw 또는 taiwan)
     suffix_candidates = []
     for s in (fs, html_fs):
         if s and s not in suffix_candidates:
             suffix_candidates.append(s)
 
-    contract_end_date_g = ""
-    contract_end_date_lala = ""
+    # 투믹스(기본) 계약: contract_status_{s} / contract_end_date_{s}
+    contract_end_date_g = _contract_result(
+        soup,
+        status_names=[f"contract_status_{s}" for s in suffix_candidates],
+        date_names=[f"contract_end_date_{s}" for s in suffix_candidates],
+    )
 
-    # 투믹스 계약 종료일 (input type=text, name=contract_end_date_{suffix})
+    # 라라툰(fmale) 계약: fmale_contract_status_{s} / fmale_contract_end_date_{s}
+    lala_status_names = []
+    lala_date_names = []
     for s in suffix_candidates:
-        contract_input = soup.find("input", attrs={"name": f"contract_end_date_{s}"})
-        if contract_input and contract_input.has_attr("value"):
-            val = contract_input.get("value", "").strip()
-            if val:
-                contract_end_date_g = val
-                break
-
-    # 라라툰 계약 상태 (select, name=contract_status_{suffix})
-    for s in suffix_candidates:
-        contract_lala = _selected_text(soup, select_name=f"contract_status_{s}")
-        if contract_lala:
-            contract_end_date_lala = contract_lala
-            break
+        lala_status_names += [f"fmale_contract_status_{s}", f"contract_status_fmale_{s}"]
+        lala_date_names   += [f"fmale_contract_end_date_{s}", f"contract_end_date_fmale_{s}"]
+    contract_end_date_lala = _contract_result(soup, lala_status_names, lala_date_names)
 
     return {
         "연재상태G":   status_g,
