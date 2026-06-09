@@ -135,10 +135,51 @@ function copyToLanguageSheets(tgtSheet, dataRows) {
     } else {
       Logger.log(`${lang} 탭: 기존 갱신 완료 (신규 없음)`);
     }
+
+    // 2-3) K열~ 사용자 수식을 마지막 데이터 행까지 자동 확장
+    extendLangFormulas(langSheet);
   }
 
   Logger.log('모든 언어 탭에 작품정보 갱신 완료');
   writeLog('언어별 탭 갱신', '✅ 완료');
+}
+
+// ── 언어 탭 K열~ 수식을 마지막 행까지 끌어내리기 (R1C1 상대참조 보존) ──
+//   D~J(4~10)는 크롤 데이터 영역, K(11)부터가 사용자 수식 영역
+const LANG_FORMULA_START_COL = 11;  // K열
+
+function extendLangFormulas(langSheet) {
+  const lastRow = langSheet.getLastRow();
+  const lastCol = langSheet.getLastColumn();
+  if (lastRow < 2 || lastCol < LANG_FORMULA_START_COL) return;
+
+  const width = lastCol - LANG_FORMULA_START_COL + 1;
+
+  // 수식이 있는 마지막 행 찾기 (K~ 영역 기준)
+  const allF = langSheet
+    .getRange(2, LANG_FORMULA_START_COL, lastRow - 1, width)
+    .getFormulasR1C1();
+
+  let lastFormulaRow = 0;
+  for (let i = allF.length - 1; i >= 0; i--) {
+    if (allF[i].some(f => f)) { lastFormulaRow = i + 2; break; }
+  }
+  if (lastFormulaRow === 0) return;        // 수식 없음 — 확장할 것 없음
+  if (lastFormulaRow >= lastRow) return;   // 이미 끝까지 채워짐
+
+  // 템플릿 = 마지막 수식 행, 그 아래부터 lastRow까지 복사
+  const template = langSheet
+    .getRange(lastFormulaRow, LANG_FORMULA_START_COL, 1, width)
+    .getFormulasR1C1()[0];
+
+  const numNew = lastRow - lastFormulaRow;
+  const newF = Array.from({length: numNew}, () => [...template]);
+
+  langSheet
+    .getRange(lastFormulaRow + 1, LANG_FORMULA_START_COL, numNew, width)
+    .setFormulasR1C1(newF);
+
+  Logger.log(`${langSheet.getName()} 탭: K열~ 수식 ${numNew}행 확장`);
 }
 
 // ── 정렬 복사하여 동기화 ──────────────────────────────

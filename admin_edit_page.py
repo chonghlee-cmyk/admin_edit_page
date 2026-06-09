@@ -479,18 +479,8 @@ def main() -> None:
             target_lang.upper(),
         )
         write_header(ws, build_lang_headers(sum_pfx))
-
-        # 옛 레이아웃 잔재 정리 — 7필드 뒤(K열~)에 남은 예전 데이터/헤더 삭제
-        leftover_start = LANG_COL_START + DATA_FIELDS  # 4 + 7 = 11 (K열)
-        last_col = ws.col_count
-        if last_col >= leftover_start:
-            a1 = gspread.utils.rowcol_to_a1(1, leftover_start)
-            a2 = gspread.utils.rowcol_to_a1(len(toon_ids) + 1, last_col)
-            try:
-                ws.batch_clear([f"{a1}:{a2}"])
-                print(f"[SHEET] 옛 잔재 정리 ({a1}:{a2})")
-            except Exception as e:
-                print(f"[SHEET] 잔재 정리 실패: {e}")
+        # 주의: K열(11) 이후는 사용자 수식 영역 — 크롤러가 절대 건드리지 않음
+        #       (D~J 7필드만 기록. 옛 잔재 정리는 1회용이라 제거됨)
     elif worker_id == 1:
         write_header(ws, build_headers())
 
