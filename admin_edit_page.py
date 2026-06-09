@@ -80,12 +80,25 @@ LANGUAGES: List[Tuple[str, str, str, str]] = [
     ("TH", "TH", "th",  "th"),
 ]
 
-FIELD_NAMES = ["연재상태G", "연재상태라라", "활성화G", "활성화라라", "요일"]
+FIELD_NAMES = ["연재상태G", "연재상태라라", "활성화G", "활성화라라", "요일", "계약종료투믹스", "계약종료라라"]
 
 # A=작품번호, B=플랫폼, C=KR상태 → 크롤 데이터는 D열(4)부터
 LANG_COL_START   = 4   # D열
-FIELDS_PER_LANG  = 5   # 5개 데이터
-DATA_FIELDS      = 5   # 실제 기록할 필드 수
+FIELDS_PER_LANG  = 7   # 7개 데이터 (5개 + 2개)
+DATA_FIELDS      = 7   # 실제 기록할 필드 수
+
+# 언어별 HTML 필드명 매핑 (url_suffix → html_field_name)
+LANGUAGE_HTML_MAP = {
+    "en":     "en",
+    "fr":     "fr",
+    "es":     "spanish(la)",      # ES는 spanish(la) 사용
+    "pt":     "pt_br",
+    "it":     "it",
+    "de":     "de",
+    "zh":     "taiwan",           # ZH는 taiwan 사용
+    "jp":     "jp",
+    "th":     "th",
+}
 
 
 # =============================================================================
@@ -158,7 +171,7 @@ def _checkbox_checked(soup: BeautifulSoup, input_id: str) -> str:
     return "Y" if el.has_attr("checked") else "N"
 
 
-def parse_lang_fields(soup: BeautifulSoup, fs: str) -> Dict[str, str]:
+def parse_lang_fields(soup: BeautifulSoup, fs: str, html_fs: str) -> Dict[str, str]:
     status_g    = _selected_text(soup, select_name=f"finish_yn_{fs}")
     status_lala = _selected_text(soup, select_name=f"fmale_finish_yn_{fs}")
     active_g    = _checkbox_checked(soup, input_id=f"set_lang_display_{fs}")
@@ -172,12 +185,27 @@ def parse_lang_fields(soup: BeautifulSoup, fs: str) -> Dict[str, str]:
             checked_days.append(d_name)
     days = ", ".join(checked_days) if checked_days else "미설정"
 
+    # 계약 종료 필드 추출
+    contract_end_date_g = ""
+    contract_end_date_lala = ""
+
+    # 투믹스 계약 종료일 (input type=text, name=contract_end_date_{html_fs})
+    contract_input = soup.find("input", attrs={"name": f"contract_end_date_{html_fs}"})
+    if contract_input and contract_input.has_attr("value"):
+        contract_end_date_g = contract_input.get("value", "").strip()
+
+    # 라라툰 계약 상태 (select, name=contract_status_{html_fs})
+    contract_lala = _selected_text(soup, select_name=f"contract_status_{html_fs}")
+    contract_end_date_lala = contract_lala if contract_lala else ""
+
     return {
         "연재상태G":   status_g,
         "연재상태라라": status_lala,
         "활성화G":     "활성화" if active_g == "Y" else ("비활성화" if active_g == "N" else ""),
         "활성화라라":  "활성화" if active_lala == "Y" else ("비활성화" if active_lala == "N" else ""),
         "요일":        days,
+        "계약종료투믹스": contract_end_date_g,
+        "계약종료라라": contract_end_date_lala,
     }
 
 
@@ -280,25 +308,51 @@ def main() -> None:
     def _get_arg(flag, default=None):
         if flag in sys.argv:
             try:
-                return int(sys.argv[sys.argv.index(flag) + 1])
+                idx = sys.argv.index(flag)
+                val = sys.argv[idx + 1]
+                # 정수 파싱 시도
+                try:
+                    return int(val)
+                except ValueError:
+                    # 정수가 아니면 문자열 반환
+                    return val
             except (IndexError, ValueError):
                 pass
         return default
 
+    target_lang = _get_arg("--lang", None)
     start_idx = _get_arg("--start", 0)
     end_idx   = _get_arg("--end", None)
     worker_id = _get_arg("--worker", 1)
 
+    if isinstance(start_idx, str):
+        start_idx = 0
+    if isinstance(end_idx, str):
+        end_idx = None
+
     print("=" * 55)
-    print(f"  ADMIN EDIT PAGE Crawler  [worker {worker_id}]")
-    print(f"  range: {start_idx} ~ {end_idx or 'end'}")
+    if target_lang:
+        print(f"  ADMIN EDIT PAGE Crawler  [{target_lang}]")
+    else:
+        print(f"  ADMIN EDIT PAGE Crawler  [worker {worker_id}]")
+        print(f"  range: {start_idx} ~ {end_idx or 'end'}")
     print("=" * 55)
 
     print("[SHEET] 연결 중...")
     creds = ServiceAccountCredentials.from_json_keyfile_name(SERVICE_ACCOUNT_JSON, GSCOPE)
     gc = gspread.authorize(creds)
     sh = gc.open_by_key(SPREADSHEET_ID)
-    ws = sh.worksheet(WORKSHEET_NAME)
+
+    # target_lang이 있으면 해당 언어 탭에서, 아니면 관리자 설정에서 읽기
+    if target_lang:
+        try:
+            ws = sh.worksheet(target_lang)
+            print(f"[SHEET] 언어 탭: {target_lang}")
+        except gspread.exceptions.WorksheetNotFound:
+            print(f"[!] '{target_lang}' 탭을 찾을 수 없습니다.")
+            return
+    else:
+        ws = sh.worksheet(WORKSHEET_NAME)
 
     all_toon_ids = read_sheet_meta(ws)
     print(f"[SHEET] 전체 작품번호 {len(all_toon_ids)}개 로드")
@@ -306,8 +360,12 @@ def main() -> None:
         print("[!] 작품번호 없음 - A열에 작품번호를 입력해주세요.")
         return
 
-    toon_ids = all_toon_ids[start_idx:end_idx]
-    print(f"[SHEET] 담당 범위: {start_idx}~{(end_idx or len(all_toon_ids)) - 1} ({len(toon_ids)}개)")
+    if target_lang:
+        toon_ids = all_toon_ids
+        print(f"[SHEET] {target_lang} 탭 처리: {len(toon_ids)}개")
+    else:
+        toon_ids = all_toon_ids[start_idx:end_idx]
+        print(f"[SHEET] 담당 범위: {start_idx}~{(end_idx or len(all_toon_ids)) - 1} ({len(toon_ids)}개)")
 
     session = build_session()
     login(session)
@@ -316,12 +374,13 @@ def main() -> None:
         toon_idx = toon_ids[0]
         print(f"\n[DEBUG] 작품번호 {toon_idx}")
         for _, sum_pfx, url_suffix, field_suffix in LANGUAGES:
+            html_fs = LANGUAGE_HTML_MAP.get(url_suffix, field_suffix)
             html = fetch_html(session, url_suffix, toon_idx)
             if not html:
                 print(f"  [{sum_pfx}] 로드 실패")
                 continue
             soup = BeautifulSoup(html, "html.parser")
-            fields = parse_lang_fields(soup, field_suffix)
+            fields = parse_lang_fields(soup, field_suffix, html_fs)
             print(f"  [{sum_pfx}] {fields}")
         return
 
@@ -343,30 +402,71 @@ def main() -> None:
         session = build_session()
         session.cookies = old_jar
 
-        lang_results: List[List[str]] = []
-        lang_ok = 0
+        if target_lang:
+            # 특정 언어만 처리 (--lang 플래그)
+            lang_ok = 0
+            for lang_tuple in LANGUAGES:
+                coin_pfx, sum_pfx, url_suffix, field_suffix = lang_tuple
+                # 해당 언어만 선택
+                if coin_pfx != target_lang.upper():
+                    continue
 
-        for _, _, url_suffix, field_suffix in LANGUAGES:
-            html = fetch_html(session, url_suffix, toon_idx)
-            if html:
-                soup = BeautifulSoup(html, "html.parser")
-                fields = parse_lang_fields(soup, field_suffix)
-                lang_ok += 1
-            else:
-                fields = {k: "" for k in FIELD_NAMES}
+                html_fs = LANGUAGE_HTML_MAP.get(url_suffix, field_suffix)
+                html = fetch_html(session, url_suffix, toon_idx)
+                if html:
+                    soup = BeautifulSoup(html, "html.parser")
+                    fields = parse_lang_fields(soup, field_suffix, html_fs)
+                    lang_ok += 1
+                else:
+                    fields = {k: "" for k in FIELD_NAMES}
 
-            lang_results.append([fields.get(fname, "") for fname in FIELD_NAMES])
-            time.sleep(SLEEP_BASE + random.random() * SLEEP_JITTER)
+                # 언어 탭에 D~J에 7개 필드 기록
+                sheet_row = i + 1  # 헤더(1행) + 데이터 시작
+                row_data = [toon_idx, "", ""]  # A, B, C (작품번호, 플랫폼, 상태)는 이미 있음
+                row_data += [fields.get(fname, "") for fname in FIELD_NAMES]
 
-        sheet_row = toon_id_to_sheet_row[toon_idx]
-        try:
-            write_row(ws, sheet_row, lang_results)
-        except Exception as e:
-            print(f"  [!] 시트 기록 실패 {toon_idx}: {e}")
+                try:
+                    ws.update(
+                        range_name=gspread.utils.rowcol_to_a1(sheet_row, 1),
+                        values=[row_data],
+                        value_input_option="RAW"
+                    )
+                except Exception as e:
+                    print(f"  [!] 시트 기록 실패 {toon_idx}: {e}")
 
-        processed += 1
-        if i <= 3 or i == total or i % 50 == 0:
-            print(f"[W{worker_id}] [{i}/{total}] {toon_idx} - {lang_ok}/{len(LANGUAGES)} OK")
+                time.sleep(SLEEP_BASE + random.random() * SLEEP_JITTER)
+                break  # 해당 언어 처리 후 종료
+
+            processed += 1
+            if i <= 3 or i == total or i % 50 == 0:
+                print(f"[{target_lang}] [{i}/{total}] {toon_idx} - {lang_ok}/1 OK")
+        else:
+            # 기존 방식 (모든 언어 처리)
+            lang_results: List[List[str]] = []
+            lang_ok = 0
+
+            for _, _, url_suffix, field_suffix in LANGUAGES:
+                html_fs = LANGUAGE_HTML_MAP.get(url_suffix, field_suffix)
+                html = fetch_html(session, url_suffix, toon_idx)
+                if html:
+                    soup = BeautifulSoup(html, "html.parser")
+                    fields = parse_lang_fields(soup, field_suffix, html_fs)
+                    lang_ok += 1
+                else:
+                    fields = {k: "" for k in FIELD_NAMES}
+
+                lang_results.append([fields.get(fname, "") for fname in FIELD_NAMES])
+                time.sleep(SLEEP_BASE + random.random() * SLEEP_JITTER)
+
+            sheet_row = toon_id_to_sheet_row[toon_idx]
+            try:
+                write_row(ws, sheet_row, lang_results)
+            except Exception as e:
+                print(f"  [!] 시트 기록 실패 {toon_idx}: {e}")
+
+            processed += 1
+            if i <= 3 or i == total or i % 50 == 0:
+                print(f"[W{worker_id}] [{i}/{total}] {toon_idx} - {lang_ok}/{len(LANGUAGES)} OK")
 
     duration = _time.time() - start_time
     print(f"\n[W{worker_id}] 완료! ({processed}개 처리)")
