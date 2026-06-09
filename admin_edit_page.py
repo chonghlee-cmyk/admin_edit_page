@@ -217,7 +217,7 @@ def open_or_create_log_worksheet(sh):
         return sh.worksheet(LOG_WORKSHEET_NAME)
     except gspread.WorksheetNotFound:
         ws = sh.add_worksheet(title=LOG_WORKSHEET_NAME, rows=1000, cols=5)
-        ws.append_row(["실행일", "실행 시간", "소요 시간", "처리 수", "워커"], value_input_option="RAW")
+        ws.append_row(["실행일", "실행 시간", "소요 시간", "처리 수", "워커/언어"], value_input_option="RAW")
         return ws
 
 
@@ -287,7 +287,8 @@ def write_row(ws, sheet_row: int, lang_results: List[List[str]]) -> None:
     raise RuntimeError(f"write_row 실패: 5회 재시도 초과 (row {sheet_row})")
 
 
-def write_sync_log(sh, processed: int, worker_id: int, duration_sec: float) -> None:
+def write_sync_log(sh, processed: int, label, duration_sec: float) -> None:
+    """label: 언어 코드(EN…) 또는 워커 번호."""
     from datetime import datetime
     try:
         log_ws = open_or_create_log_worksheet(sh)
@@ -295,10 +296,10 @@ def write_sync_log(sh, processed: int, worker_id: int, duration_sec: float) -> N
         sec = int(duration_sec)
         duration_str = f"{sec // 60}분 {sec % 60}초" if sec >= 60 else f"{sec}초"
         log_ws.append_row(
-            [now.strftime("%Y-%m-%d"), now.strftime("%H:%M:%S"), duration_str, processed, worker_id],
+            [now.strftime("%Y-%m-%d"), now.strftime("%H:%M:%S"), duration_str, processed, label],
             value_input_option="RAW",
         )
-        print(f"[LOG] 로그 기록 완료 → '{LOG_WORKSHEET_NAME}'")
+        print(f"[LOG] 로그 기록 완료 → '{LOG_WORKSHEET_NAME}' ({label})")
     except Exception as e:
         print(f"[LOG] 로그 기록 실패: {e}")
 
@@ -481,8 +482,9 @@ def main() -> None:
                 print(f"[W{worker_id}] [{i}/{total}] {toon_idx} - {lang_ok}/{len(LANGUAGES)} OK")
 
     duration = _time.time() - start_time
-    print(f"\n[W{worker_id}] 완료! ({processed}개 처리)")
-    write_sync_log(sh, processed, worker_id, duration)
+    log_label = target_lang.upper() if target_lang else worker_id
+    print(f"\n[{log_label}] 완료! ({processed}개 처리)")
+    write_sync_log(sh, processed, log_label, duration)
 
 
 if __name__ == "__main__":
