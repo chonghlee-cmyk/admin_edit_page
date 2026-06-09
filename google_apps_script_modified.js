@@ -65,6 +65,8 @@ function copyFormulasDown(sheet, sourceRow, targetLastRow, startCol, endCol) {
 }
 
 // ── 각 언어 탭에 작품번호, 플랫폼, KR상태 복사 ──
+//   · 기존 행: B/C(플랫폼/KR상태)를 매번 최신값으로 갱신 (D~ 크롤 데이터는 보존)
+//   · 신규 행: 맨 아래에 추가
 function copyToLanguageSheets(tgtSheet, dataRows) {
   const ADMIN_START = 2;
 
@@ -74,68 +76,69 @@ function copyToLanguageSheets(tgtSheet, dataRows) {
   const colP = col('P');
   const colBT = col('BT');
 
-  // 1️⃣ 작품관리대장에서 A, P, BT 컬럼 한 번에 읽기
+  // 1️⃣ 작품관리대장에서 A, P, BT 한 번에 읽어 작품번호 → [플랫폼, KR상태] 맵 구성
   const sourceData = tgtSheet
     .getRange(ADMIN_START, 1, dataRows, colBT + 1)
     .getValues();
 
-  // 2️⃣ 각 언어별 탭에서 기존 A열 값 Set으로 만들기
-  const existingKeysByLang = {};
-  for (const lang of LANGUAGE_TABS) {
-    let langSheet = ss.getSheetByName(lang);
-    if (!langSheet) continue;
-
-    const langLastRow = langSheet.getLastRow();
-    let existingKeys = new Set();
-
-    if (langLastRow >= ADMIN_START) {
-      const existingAValues = langSheet
-        .getRange(ADMIN_START, 1, langLastRow - ADMIN_START + 1, 1)
-        .getValues();
-
-      existingKeys = new Set(
-        existingAValues
-          .map(row => String(row[0]).trim())
-          .filter(v => v !== '')
-      );
+  const infoMap = new Map();   // keyA → [플랫폼, KR상태]
+  const orderedKeys = [];      // 신규 추가 시 작품관리대장 순서 유지
+  for (const row of sourceData) {
+    const keyA = String(row[colA]).trim();
+    if (keyA === '') continue;
+    if (!infoMap.has(keyA)) {
+      infoMap.set(keyA, [row[colBT] ?? '', row[colP] ?? '']);
+      orderedKeys.push(keyA);
     }
-    existingKeysByLang[lang] = existingKeys;
   }
 
-  // 3️⃣ 각 언어별 탭에 신규 행만 추가
+  // 2️⃣ 각 언어 탭: 기존 행 B/C 갱신 + 신규 행 append
   for (const lang of LANGUAGE_TABS) {
-    let langSheet = ss.getSheetByName(lang);
+    const langSheet = ss.getSheetByName(lang);
     if (!langSheet) continue;
 
-    const existingKeys = existingKeysByLang[lang];
-    const newRows = [];
+    const existingKeys = new Set();
+    const langLastRow = langSheet.getLastRow();
 
-    for (const row of sourceData) {
-      const keyA = String(row[colA]).trim();
-      if (keyA === '') continue;
-      if (existingKeys.has(keyA)) continue;
+    // 2-1) 기존 행 A/B/C 읽어서 B/C를 최신값으로 갱신 (A·D~ 는 그대로)
+    if (langLastRow >= ADMIN_START) {
+      const abcRange = langSheet.getRange(ADMIN_START, 1, langLastRow - ADMIN_START + 1, 3);
+      const abc = abcRange.getValues();
 
-      newRows.push([
-        keyA,                    // A: 작품번호
-        row[colBT] ?? '',        // B: 플랫폼
-        row[colP] ?? '',         // C: KR상태
-      ]);
-      existingKeys.add(keyA);
+      for (let i = 0; i < abc.length; i++) {
+        const k = String(abc[i][0]).trim();
+        if (k === '') continue;
+        existingKeys.add(k);
+        if (infoMap.has(k)) {
+          const [plat, stat] = infoMap.get(k);
+          abc[i][1] = plat;   // B: 플랫폼
+          abc[i][2] = stat;   // C: KR상태
+        }
+      }
+      abcRange.setValues(abc);
     }
 
-    // 신규가 있으면 일괄 추가
+    // 2-2) 언어 탭에 없는 신규 작품만 맨 아래 추가
+    const newRows = [];
+    for (const k of orderedKeys) {
+      if (existingKeys.has(k)) continue;
+      const [plat, stat] = infoMap.get(k);
+      newRows.push([k, plat, stat]);
+    }
+
     if (newRows.length > 0) {
       const appendStartRow = Math.max(langSheet.getLastRow() + 1, ADMIN_START);
       langSheet
         .getRange(appendStartRow, 1, newRows.length, 3)
         .setValues(newRows);
-
-      Logger.log(`${lang} 탭 신규 추가 완료 (${newRows.length}행)`);
+      Logger.log(`${lang} 탭: 기존 갱신 + 신규 ${newRows.length}행 추가`);
+    } else {
+      Logger.log(`${lang} 탭: 기존 갱신 완료 (신규 없음)`);
     }
   }
 
-  Logger.log('모든 언어 탭에 작품정보 추가 완료');
-  writeLog('언어별 탭 추가', '✅ 완료');
+  Logger.log('모든 언어 탭에 작품정보 갱신 완료');
+  writeLog('언어별 탭 갱신', '✅ 완료');
 }
 
 // ── 정렬 복사하여 동기화 ──────────────────────────────

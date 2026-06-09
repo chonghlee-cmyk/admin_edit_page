@@ -232,17 +232,24 @@ def read_sheet_meta(ws) -> List[str]:
     return result
 
 
+def build_lang_headers(sum_pfx: str) -> List[str]:
+    """단일 언어 탭의 D열부터 헤더 (7개 필드)."""
+    return [
+        f"{sum_pfx} 연재 상태 (투믹스)",
+        f"{sum_pfx} 연재 상태 (라라툰)",
+        f"{sum_pfx} 작품 활성화 (투믹스)",
+        f"{sum_pfx} 작품 활성화 (라라툰)",
+        f"{sum_pfx} 요일",
+        f"{sum_pfx} 계약 종료 (투믹스)",
+        f"{sum_pfx} 계약 종료 (라라툰)",
+    ]
+
+
 def build_headers() -> List[str]:
-    """D열부터 시작하는 언어별 헤더 (A/B/C는 건드리지 않음)."""
+    """D열부터 시작하는 전체 언어 헤더 (A/B/C는 건드리지 않음)."""
     headers = []
     for _, sum_pfx, _, _ in LANGUAGES:
-        headers += [
-            f"{sum_pfx} 연재 상태 (투믹스)",
-            f"{sum_pfx} 연재 상태 (라라툰)",
-            f"{sum_pfx} 작품 활성화 (투믹스)",
-            f"{sum_pfx} 작품 활성화 (라라툰)",
-            f"{sum_pfx} 요일",
-        ]
+        headers += build_lang_headers(sum_pfx)
     return headers
 
 
@@ -384,10 +391,16 @@ def main() -> None:
             print(f"  [{sum_pfx}] {fields}")
         return
 
-    # worker 1만 헤더 작성
-    if worker_id == 1:
-        headers = build_headers()
-        write_header(ws, headers)
+    # 헤더 작성
+    if target_lang:
+        # 해당 언어의 sum_pfx 찾아서 7개 헤더만 D1부터 작성
+        sum_pfx = next(
+            (sp for cp, sp, _, _ in LANGUAGES if cp == target_lang.upper()),
+            target_lang.upper(),
+        )
+        write_header(ws, build_lang_headers(sum_pfx))
+    elif worker_id == 1:
+        write_header(ws, build_headers())
 
     # 시트 행 번호: 헤더(1행) + start_idx 오프셋
     toon_id_to_sheet_row = {tid: (2 + start_idx + j) for j, tid in enumerate(toon_ids)}
@@ -420,15 +433,14 @@ def main() -> None:
                 else:
                     fields = {k: "" for k in FIELD_NAMES}
 
-                # 언어 탭에 D~J에 7개 필드 기록
+                # 언어 탭에 D열부터 7개 필드만 기록 (A/B/C는 Apps Script 담당 — 보존)
                 sheet_row = i + 1  # 헤더(1행) + 데이터 시작
-                row_data = [toon_idx, "", ""]  # A, B, C (작품번호, 플랫폼, 상태)는 이미 있음
-                row_data += [fields.get(fname, "") for fname in FIELD_NAMES]
+                field_data = [fields.get(fname, "") for fname in FIELD_NAMES]
 
                 try:
                     ws.update(
-                        range_name=gspread.utils.rowcol_to_a1(sheet_row, 1),
-                        values=[row_data],
+                        range_name=gspread.utils.rowcol_to_a1(sheet_row, LANG_COL_START),
+                        values=[field_data],
                         value_input_option="RAW"
                     )
                 except Exception as e:
