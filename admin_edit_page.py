@@ -185,18 +185,31 @@ def parse_lang_fields(soup: BeautifulSoup, fs: str, html_fs: str) -> Dict[str, s
             checked_days.append(d_name)
     days = ", ".join(checked_days) if checked_days else "미설정"
 
-    # 계약 종료 필드 추출
+    # 계약 종료 필드 추출 — 접미사가 언어마다 다를 수 있어 후보를 순서대로 시도
+    # (예: ES는 es_mx 또는 spanish(la), ZH는 zh_tw 또는 taiwan)
+    suffix_candidates = []
+    for s in (fs, html_fs):
+        if s and s not in suffix_candidates:
+            suffix_candidates.append(s)
+
     contract_end_date_g = ""
     contract_end_date_lala = ""
 
-    # 투믹스 계약 종료일 (input type=text, name=contract_end_date_{html_fs})
-    contract_input = soup.find("input", attrs={"name": f"contract_end_date_{html_fs}"})
-    if contract_input and contract_input.has_attr("value"):
-        contract_end_date_g = contract_input.get("value", "").strip()
+    # 투믹스 계약 종료일 (input type=text, name=contract_end_date_{suffix})
+    for s in suffix_candidates:
+        contract_input = soup.find("input", attrs={"name": f"contract_end_date_{s}"})
+        if contract_input and contract_input.has_attr("value"):
+            val = contract_input.get("value", "").strip()
+            if val:
+                contract_end_date_g = val
+                break
 
-    # 라라툰 계약 상태 (select, name=contract_status_{html_fs})
-    contract_lala = _selected_text(soup, select_name=f"contract_status_{html_fs}")
-    contract_end_date_lala = contract_lala if contract_lala else ""
+    # 라라툰 계약 상태 (select, name=contract_status_{suffix})
+    for s in suffix_candidates:
+        contract_lala = _selected_text(soup, select_name=f"contract_status_{s}")
+        if contract_lala:
+            contract_end_date_lala = contract_lala
+            break
 
     return {
         "연재상태G":   status_g,
